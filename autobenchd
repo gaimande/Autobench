@@ -131,15 +131,26 @@ parse_httperf_output
         $results{duration}=$2;
     }   
 
-    if (/^Connection rate: (\d+\.\d)/) {
-        $results{conn_rate}=$1;
-    }   
+	if (/^Request rate: (\d+\.\d)/) {
+    	$results{req_rate}=$1;
+    }
+
+	if (/^Connection rate: .*<=(\d+)/) {
+		$results{concur_conn}=$1;
+	}
+   
+    if (/^Reply rate .*min (\d+\.\d) avg (\d+\.\d) max (\d+\.\d) stddev (\d+\.\d)/) {
+    	$results{rep_rate_min} = $1; 
+    	$results{rep_rate_avg} = $2; 
+    	$results{rep_rate_max} = $3; 
+    	$results{rep_rate_stdv} = $4; 
+    }
 
     if (/^Cwmp session rate .*min (\d+\.\d+) avg (\d+\.\d+) max (\d+\.\d+) stddev (\d+\.\d+)/) {
-        $results{rep_rate_min} = $1; 
-        $results{rep_rate_avg} = $2; 
-        $results{rep_rate_max} = $3; 
-        $results{rep_rate_stdv} = $4; 
+        $results{sess_rate_min} = $1; 
+        $results{sess_rate_avg} = $2; 
+        $results{sess_rate_max} = $3; 
+        $results{sess_rate_stdv} = $4; 
     }   
     
     if (/^Net I\/O: (\d+\.\d)/) {

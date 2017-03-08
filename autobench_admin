@@ -429,6 +429,11 @@ else {
         "avg_rep_rate_$config{host1}".$sep.
         "max_rep_rate_$config{host1}".$sep.
         "stddev_rep_rate_$config{host1}".$sep.
+		"min_sess_rate_$config{host1}".$sep.
+		"avg_sess_rate_$config{host1}".$sep.
+		"max_sess_rate_$config{host1}".$sep.
+		"stddev_sess_rate_$config{host1}".$sep.
+		"concurrent_conn_$config{host1}".$sep.
         "duration_$config{host1}".$sep.
         "sess_life_time_$config{host1}".$sep.
         "net_io_$config{host1}".$sep.
@@ -447,8 +452,12 @@ else {
             "avg_rep_rate_$config{host2}".$sep.
             "max_rep_rate_$config{host2}".$sep.
             "stddev_rep_rate_$config{host2}".$sep.
-            "duration_$config{host2}".$sep.
-            "sess_life_time_$config{host2}".$sep.
+			"min_sess_rate_$config{host2}".$sep.
+			"avg_sess_rate_$config{host2}".$sep.
+			"max_sess_rate_$config{host2}".$sep.
+			"stddev_sess_rate_$config{host2}".$sep.
+			"concurrent_conn_$config{host2}".$sep.
+			"duration_$config{host2}".$sep.
             "net_io_$config{host2}".$sep.
             "error_total_$config{host2}".$sep.
             "error_work_flow_$config{host2}".$sep.
@@ -481,11 +490,16 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
     print OUT $dem_req.$sep.
       $res_host1{time_begin}.$sep.
       $res_host1{time_end}.$sep.
-      $res_host1{conn_rate}.$sep.
+      $res_host1{req_rate}.$sep.
       $res_host1{rep_rate_min}.$sep.
       $res_host1{rep_rate_avg}.$sep.
       $res_host1{rep_rate_max}.$sep.
       $res_host1{rep_rate_stdv}.$sep.
+	  $res_host1{sess_rate_min}.$sep.
+	  $res_host1{sess_rate_avg}.$sep.
+	  $res_host1{sess_rate_max}.$sep.
+	  $res_host1{sess_rate_stdv}.$sep.
+	  $res_host1{concur_conn}.$sep.
       $res_host1{duration}.$sep.
       $res_host1{sess_life_time}.$sep.
       $res_host1{net_io}.$sep.
@@ -501,11 +515,16 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
     else {
     print OUT $res_host2{time_begin}.$sep.
       $res_host2{time_end}.$sep.
-      $res_host2{conn_rate}.$sep.
+      $res_host2{req_rate}.$sep.
       $res_host2{rep_rate_min}.$sep.
       $res_host2{rep_rate_avg}.$sep.
       $res_host2{rep_rate_max}.$sep.
       $res_host2{rep_rate_stdv}.$sep.
+	  $res_host2{sess_rate_min}.$sep.
+	  $res_host2{sess_rate_avg}.$sep.
+	  $res_host2{sess_rate_max}.$sep.
+	  $res_host2{sess_rate_stdv}.$sep.
+	  $res_host2{concur_conn}.$sep.
       $res_host2{duration}.$sep.
       $res_host2{sess_life_time}.$sep.
       $res_host2{net_io}.$sep.
