@@ -26,7 +26,7 @@ use strict;
 use Getopt::Long;
 
 # The location of the master config file
-my $MASTER_CONFIG = "/etc/autobench.conf";
+my $MASTER_CONFIG = "/usr/local/etc/autobench.conf";
 
 # The location of the autobench config file
 my $CONFIG_FILE = $ENV{HOME}."/.autobench.conf";
@@ -141,11 +141,9 @@ test_host
 	    $extra_httperf_opts .= " --".$1." ".$hf_val ;
 	}
     }
-    check_present($config_ref, qw(num_conn num_call timeout));
-    my $httperf_command = "httperf --server $server --uri \"$uri\" --num-conn ".
-	  $$config_ref{num_conn}." --num-call ".
-	  $$config_ref{num_call}." --timeout ".
-	  $$config_ref{timeout}." --rate $rate --port $port".
+    check_present($config_ref, qw(timeout));
+    my $httperf_command = "/home/quyenlv/httperf/src/httperf --server $server --uri \"$uri\" ".
+	  "--timeout ".$$config_ref{timeout}." --rate $rate --port $port".
 	  ($extra_httperf_opts || "");
 
     print STDERR "$httperf_command\n" if $DEBUG;
@@ -153,41 +151,55 @@ test_host
     open (IN,  "$httperf_command |")
 	or die "Cannot execute httperf\n";
     while(<IN>) {
-	if (/^Total: .*replies (\d+)/) {
+	if (/^Total: .*replies (\d+) test-duration (\d+\.\d+)/) {
 	    $results{replies}=$1;
+		$results{duration}=$2;
 	}
+
 	if (/^Connection rate: (\d+\.\d)/) {
 	    $results{conn_rate}=$1;
 	}
-	if (/^Request rate: (\d+\.\d)/) {
-	    $results{req_rate}=$1;
-	}
-	if (/^Reply rate .*min (\d+\.\d) avg (\d+\.\d) max (\d+\.\d) stddev (\d+\.\d)/) {
+
+	if (/^Cwmp session rate .*min (\d+\.\d+) avg (\d+\.\d+) max (\d+\.\d+) stddev (\d+\.\d+)/) {
 	    $results{rep_rate_min} = $1;
 	    $results{rep_rate_avg} = $2;
 	    $results{rep_rate_max} = $3;
 	    $results{rep_rate_stdv} = $4;
 	}
-	if (/^Reply time .* response (\d+\.\d)/) {
-	    $results{rep_time} = $1;
-	}
+	
 	if (/^Net I\/O: (\d+\.\d)/) {
 	    $results{net_io} = $1;
 	}
-	if (/^Errors: total (\d+)/) {
-	    $results{errors} = $1;
+
+	if (/^Cwmp session failed .*total (\d+) .*work-flow (\d+) bad-request (\d+) no-response (\d+) others (\d+)/) {
+	    $results{error_total} = $1;
+		$results{error_workflow} = $2;
+		$results{error_badreq} = $3;
+		$results{error_nores} = $4;
+		$results{error_other} = $5;
 	}
+
+    if (/^Cwmp session lifetime .*: (\d+\.\d)/) {
+		$results{sess_life_time} = $1;
+	}
+
+	if (/^Cwmp testing time: begin (.*) end (.*)/) {
+		$results{time_begin} = $1;
+		$results{time_end} = $2;
+
+		# Replace space with '@' character
+		$results{time_begin} =~ s/\s/@/g;
+		$results{time_end} =~ s/\s/@/g;
+	}
+
 	print $_ unless $$config_ref{quiet};
     }
     close (IN);
     
     if ($results{replies} == 0) {
 	print STDERR "Zero replies received, test invalid: rate $rate\n";
-	$results{percent_errors} = 101;
     }
-    else {
-	$results{percent_errors} = ( 100 * $results{errors} / $results{replies} );
-    }
+
     return \%results;
 }
 
@@ -199,29 +211,39 @@ print_header
 
     # The following is really quite ugly...
     print $out_stream "dem_req_rate".$sep.
+		"time_begin".$sep.
+		"time_end".$sep.
         "req_rate_$config{host1}".$sep.
-        "con_rate_$config{host1}".$sep.
         "min_rep_rate_$config{host1}".$sep.
         "avg_rep_rate_$config{host1}".$sep.
         "max_rep_rate_$config{host1}".$sep.
         "stddev_rep_rate_$config{host1}".$sep.
-        "resp_time_$config{host1}".$sep.
+        "duration_$config{host1}".$sep.
+		"sess_life_time_$config{host1}".$sep.
         "net_io_$config{host1}".$sep.
-        "errors_$config{host1}";
+        "error_total_$config{host1}".$sep.
+		"error_work_flow_$config{host1}".$sep.
+		"error_bad_request_$config{host1}".$sep.
+		"error_no_response_$config{host1}".$sep.
+		"error_others_$config{host1}";
 
     if ($config{single_host}) {
         print $out_stream "\n";
     }
     else {
         print $out_stream $sep."req_rate_$config{host2}".$sep.
-            "con_rate_$config{host2}".$sep.
             "min_rep_rate_$config{host2}".$sep.
             "avg_rep_rate_$config{host2}".$sep.
             "max_rep_rate_$config{host2}".$sep.
             "stddev_rep_rate_$config{host2}".$sep.
-            "resp_time_$config{host2}".$sep.
+			"duration_$config{host2}".$sep.
+			"sess_life_time_$config{host2}".$sep.
             "net_io_$config{host2}".$sep.
-            "errors_$config{host2}\n";
+			"error_total_$config{host2}".$sep.
+			"error_work_flow_$config{host2}".$sep.
+			"error_bad_request_$config{host2}".$sep.
+			"error_no_response_$config{host2}".$sep.
+			"error_others_$config{host2}\n";
     }
 }
 
@@ -237,9 +259,9 @@ my %config = get_config($CONFIG_FILE);
 
 # Override config file with options supplied on the command line.
 GetOptions( \%config, "host1:s","host2:s","uri1:s","uri2:s","port1:i",
-            "port2:i","low_rate:i","high_rate:i","rate_step:i","num_conn:i",
-            "num_call:i","timeout:i","quiet","single_host","debug",
-	    "output_fmt=s","file=s","version", "const_test_time:i");
+            "port2:i","low_rate:i","high_rate:i","rate_step:i",
+            ,"timeout:i","quiet","single_host","debug",
+	    "output_fmt=s","file=s","version");
 
 if ($config{version}) {
     print "Autobench $VERSION\nCopyright (C) Julian T. J. Midgley <jtjm\@xenoclast.org> 2003\n";
@@ -259,8 +281,8 @@ else {
 }
 
 # Check that httperf is in our path
-system("which httperf > /dev/null") == 0 
-    or die 'Cannot find httperf in $PATH; please ensure it is installed and your PATH is'."\ncorrectly set\n";
+#system("which httperf > /dev/null") == 0 
+#    or die 'Cannot find httperf in $PATH; please ensure it is installed and your PATH is'."\ncorrectly set\n";
 
 # Basic input checking
 check_present(\%config, qw(low_rate high_rate rate_step host1 uri1 port1));
@@ -268,9 +290,6 @@ check_host($config{host1});
 unless ($config{single_host}) {
     check_present(\%config, qw(host2 uri2 port2));
     check_host($config{host2});
-}
-if ($config{const_test_time} && $config{const_test_time} < 10) {
-    die "--const_test_time must be >= 10. See autobench(1) for details\n";
 }
 
 # Set the output stream correctly 
@@ -292,9 +311,6 @@ print_header(\%config, $sep, \*OUT);
 for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate}; 
      $curr_rate += $config{rate_step}) {
 
-    if ($config{const_test_time}) {
-        $config{num_conn} = $curr_rate * $config{const_test_time};
-    }
     # Test Host 1
     %res_host1 = %{test_host (\%config, $curr_rate, $config{host1}, $config{uri1}, $config{port1})};
     
@@ -304,32 +320,45 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
     } 
 
     # Merge and Display Results
-    $dem_req = ($config{num_call} * $curr_rate);
-    print OUT $dem_req.$sep.
-	  $res_host1{req_rate}.$sep.
+	$dem_req = $curr_rate;
+
+	print OUT $dem_req.$sep.
+	  $res_host1{time_begin}.$sep.
+	  $res_host1{time_end}.$sep.
 	  $res_host1{conn_rate}.$sep.
 	  $res_host1{rep_rate_min}.$sep.
 	  $res_host1{rep_rate_avg}.$sep.
 	  $res_host1{rep_rate_max}.$sep.
 	  $res_host1{rep_rate_stdv}.$sep.
-          $res_host1{rep_time}.$sep.
+      $res_host1{duration}.$sep.
+	  $res_host1{sess_life_time}.$sep.
 	  $res_host1{net_io}.$sep.
-          $res_host1{percent_errors};
+	  $res_host1{error_total}.$sep.
+	  $res_host1{error_workflow}.$sep.
+	  $res_host1{error_badreq}.$sep.
+	  $res_host1{error_nores}.$sep.
+	  $res_host1{error_other};
+
     if ($config{single_host}) {
 	print OUT "\n";
     }
     else {
-	print OUT $sep.$res_host2{req_rate}.$sep.
+	print OUT $res_host2{time_begin}.$sep.
+	  $res_host2{time_end}.$sep.
 	  $res_host2{conn_rate}.$sep.
 	  $res_host2{rep_rate_min}.$sep.
 	  $res_host2{rep_rate_avg}.$sep.
 	  $res_host2{rep_rate_max}.$sep.
 	  $res_host2{rep_rate_stdv}.$sep.
-	  $res_host2{rep_time}.$sep.
+	  $res_host2{duration}.$sep.
+	  $res_host2{sess_life_time}.$sep.
 	  $res_host2{net_io}.$sep.
-	  $res_host2{percent_errors}."\n";	   
+	  $res_host2{error_total}.$sep.
+	  $res_host2{error_workflow}.$sep.
+	  $res_host2{error_badreq}.$sep.
+	  $res_host2{error_nores}.$sep.
+	  $res_host2{error_other}."\n";
     }
-
 }
 
 close (OUT);

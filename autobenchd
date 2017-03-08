@@ -125,37 +125,47 @@ parse_httperf_output
     my ($output, $results_ref) = @_;    
     my %results = %$results_ref;
     $_ = $output;
-    if (/^Total: .*replies (\d+)/) {
-	$results{replies}=$1;
-    }
+
+	if (/^Total: .*replies (\d+) test-duration (\d+\.\d+)/) {
+        $results{replies}=$1;
+        $results{duration}=$2;
+    }   
+
     if (/^Connection rate: (\d+\.\d)/) {
-	$results{conn_rate}=$1;
-    }
-    if (/^Request rate: (\d+\.\d)/) {
-	$results{req_rate}=$1;
-    }
-    if (/^Reply rate .*min (\d+\.\d) avg (\d+\.\d) max (\d+\.\d) stddev (\d+\.\d)/) {
-	$results{rep_rate_min} = $1;
-	$results{rep_rate_avg} = $2;
-	$results{rep_rate_max} = $3;
-	$results{rep_rate_stdv} = $4;
-    }
-    if (/^Reply time .* response (\d+\.\d)/) {
-	$results{rep_time} = $1;
-    }
-    if (/^Reply status.*1xx=(\d+) 2xx=(\d+) 3xx=(\d+) 4xx=(\d+) 5xx=(\d+)/) {
-        $results{status_100} = $1;
-        $results{status_200} = $2;
-        $results{status_300} = $3;
-        $results{status_400} = $4;
-        $results{status_500} = $5;
-    }
+        $results{conn_rate}=$1;
+    }   
+
+    if (/^Cwmp session rate .*min (\d+\.\d+) avg (\d+\.\d+) max (\d+\.\d+) stddev (\d+\.\d+)/) {
+        $results{rep_rate_min} = $1; 
+        $results{rep_rate_avg} = $2; 
+        $results{rep_rate_max} = $3; 
+        $results{rep_rate_stdv} = $4; 
+    }   
+    
     if (/^Net I\/O: (\d+\.\d)/) {
-	$results{net_io} = $1;
-    }
-    if (/^Errors: total (\d+)/) {
-	$results{errors} = $1;
-    }
+        $results{net_io} = $1; 
+    }   
+
+    if (/^Cwmp session failed .*total (\d+) .*work-flow (\d+) bad-request (\d+) no-response (\d+) others (\d+)/) {
+        $results{error_total} = $1; 
+        $results{error_workflow} = $2; 
+        $results{error_badreq} = $3; 
+        $results{error_nores} = $4; 
+        $results{error_other} = $5; 
+    }   
+
+    if (/^Cwmp session lifetime .*: (\d+\.\d)/) {
+        $results{sess_life_time} = $1; 
+    }   
+
+    if (/^Cwmp testing time: begin (.*) end (.*)/) {
+        $results{time_begin} = $1; 
+        $results{time_end} = $2; 
+
+        # Replace space with '@' character
+        $results{time_begin} =~ s/\s/@/g;
+        $results{time_end} =~ s/\s/@/g;
+    } 
 
     return \%results;
 }
@@ -169,12 +179,12 @@ write_results
     my ($fh, $results_ref) = @_;
     my ($return_string, $key);
 
-    if (! defined %$results_ref) {
+    if (!%$results_ref) {
 	$return_string = "";
     }
     else {
 	foreach $key (keys %$results_ref) {
-	    $return_string .= $key.":".$$results_ref{$key}."\n";
+	    $return_string .= $key."::".$$results_ref{$key}."\n";
 	}
     }
     if (! defined (syswrite($fh, $return_string))) {
@@ -406,9 +416,6 @@ while (1) {
 		
 		if ( (! defined $results{replies}) || ($results{replies} == 0)) {
 		    undef %results;
-		}
-		else {
-		    $results{percent_errors} = ( 100 * $results{errors} / $results{replies} );
 		}
 
 		write_results(*PARENT, \%results);

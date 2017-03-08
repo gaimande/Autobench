@@ -26,6 +26,7 @@ use Socket;
 use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
 use Getopt::Long;
 use FileHandle;
+use POSIX qw(strftime);
 
 # The location of the master config file
 my $MASTER_CONFIG = "/etc/autobench.conf";
@@ -51,30 +52,30 @@ get_config
     my $install = 0;
 
     open (IN,$CONFIG_FILE) 
-	or $install = 1;
+    or $install = 1;
 
     if ($install) {
-	install_new_config($CONFIG_FILE);
-	print STDERR "Installation complete - please rerun autobench_admin\n";
-	exit(0);
+    install_new_config($CONFIG_FILE);
+    print STDERR "Installation complete - please rerun autobench_admin\n";
+    exit(0);
     }
     
     while (<IN>) {
-	# Throw away comments and blank lines
-	next if (/^\#.*|^\s+$|^\s+\#|^$/);
-	
-	# Check for valid key-value pair and extract key into $1, value into $2
-	unless (/^\s*([a-zA-Z][a-zA-Z_0-9\-]*?)\s*=\s*(\S.*?)\s*$/) {
-	    warn "AUTOBENCH: Warning - invalid line in config file:'$_'";
-	    next;
-	}
-	
-	if (defined $config{$1}) {
-	    warn "AUTOBENCH: Warning - parameter '$1' defined more than once,".
-		 "ignoring '$1'='$2'";
-	    next;
-	}
-	$config{$1}=$2;
+    # Throw away comments and blank lines
+    next if (/^\#.*|^\s+$|^\s+\#|^$/);
+    
+    # Check for valid key-value pair and extract key into $1, value into $2
+    unless (/^\s*([a-zA-Z][a-zA-Z_0-9\-]*?)\s*=\s*(\S.*?)\s*$/) {
+        warn "AUTOBENCH: Warning - invalid line in config file:'$_'";
+        next;
+    }
+    
+    if (defined $config{$1}) {
+        warn "AUTOBENCH: Warning - parameter '$1' defined more than once,".
+         "ignoring '$1'='$2'";
+        next;
+    }
+    $config{$1}=$2;
     }
     return %config;
 }
@@ -102,8 +103,8 @@ get_clients
     my ($host, %client_hash, $port, $str);
 
     foreach $str (@tmp_clients) {
-	($host, $port)      = split(/:/,$str);
-	$client_hash{$host} = $port;
+    ($host, $port)      = split(/:/,$str);
+    $client_hash{$host} = $port;
     }
     return \%client_hash;
 }
@@ -115,17 +116,17 @@ open_socket
 {
     my ($host, $port) = @_;
     my $iaddr = inet_aton($host)
-	or die "Invalid host: $host: $!";
+    or die "Invalid host: $host: $!";
     my $paddr;
 
     my $sock = new FileHandle;
     socket ($sock, PF_INET, SOCK_STREAM, getprotobyname('tcp'));
     $paddr = sockaddr_in($port, $iaddr);
     connect($sock, $paddr)
-	or die "Connection to $host:$port failed: $!";
+    or die "Connection to $host:$port failed: $!";
     return $sock;
 }
-	    
+        
 #---------------------------------------------------------------------------
 # set_non_block ($fh)
 sub
@@ -133,9 +134,9 @@ set_non_block
 {
     my $fh = shift @_;
     my $flags = fcntl($fh, F_GETFL, 0)
-	or die "Can't get flags for socket: $!\n";
+    or die "Can't get flags for socket: $!\n";
     $flags = fcntl($fh, F_SETFL, $flags | O_NONBLOCK)
-	or die "Can't set flags for socket: $!\n";
+    or die "Can't set flags for socket: $!\n";
 }
 
 #---------------------------------------------------------------------------
@@ -149,10 +150,24 @@ build_select_bits
     $selbits = '';
 
     foreach $sock (@socks) {
-	vec($selbits, fileno($sock), 1) = 1;
+    vec($selbits, fileno($sock), 1) = 1;
     }
     
     return $selbits;
+}
+
+#---------------------------------------------------------------------------
+# gen_rand_serial ()
+
+sub
+gen_rand_serial
+{
+    my @chars = ("A".."Z");
+    my $string;
+
+    $string .= $chars[rand @chars] for 1..8;
+
+    return $string;
 }
 
 #---------------------------------------------------------------------------
@@ -166,9 +181,9 @@ parse_response
     my ($el, %results, $key, $val);
 
     foreach $el (@elements) {
-	next if ($el =~ /BENCH_COMPLETE|END_DATA/);
-	($key, $val) = split(/:/, $el);
-	$results{$key} = $val;
+    next if ($el =~ /BENCH_COMPLETE|END_DATA/);
+    ($key, $val) = split(/::/, $el);
+    $results{$key} = $val;
     }
     return \%results;
 }
@@ -180,119 +195,139 @@ collate_results
 {
     my ($results_sock_ref, @socks) = @_;
     my ($sock, $key, %results);
+    my $num_clients = @socks;
     
     foreach $sock (@socks) {
-	foreach $key (keys %{$$results_sock_ref{$sock}}) {
-	    $results{$key} += $ { $$results_sock_ref{$sock}}{$key};
-	}
+    foreach $key (keys %{$$results_sock_ref{$sock}}) {
+        if ($key cmp "time_begin" && $key cmp "time_end") {
+            $results{$key} += $ { $$results_sock_ref{$sock}}{$key};
+        }
     }
-    $results{rep_time} = $results{rep_time} / scalar(@socks);
-    $results{percent_errors} = $results{percent_errors} / scalar(@socks);
+    }
+
+    $results{time_begin} = $ { $$results_sock_ref{$socks[0]}}{time_begin};
+    $results{time_end} = $ { $$results_sock_ref{$socks[0]}}{time_end};
+    $results{duration} = $results{duration} / $num_clients;
+    $results{sess_life_time} = $results{sess_life_time} / $num_clients;
+    $results{rep_rate_stdv} = $results{rep_rate_stdv} / $num_clients;
+    
     return \%results;
 }
 
     
 #---------------------------------------------------------------------------
-# run_test($httperf_args, $clients_ref)
+# run_test($httperf_args, $clients_ref, $config_ref)
 sub
 run_test
 {
-    my ($httperf_args, $clients_ref) = @_;
+    my ($httperf_args, $clients_ref, $config_ref) = @_;
     my ($client, %client_socks, @socks, $sock, %response, %results_sock);
-    my ($rin, $rout, $buffer, $bytes, $nfound, $accepted, $completed);
+    my ($rin, $rout, $buffer, $bytes, $nfound, $accepted, $completed, $httperf_args_full);
+    my @serial_prefix_lists;
+    my $i = 0;
+
+	if (!defined($$config_ref{serial_prefix})) {
+    	foreach $client (keys %$clients_ref) {
+        	$$config_ref{serial_prefix} .= gen_rand_serial.",";
+    	}
+		print STDERR "Generate random serial prefix: $$config_ref{serial_prefix}\n";
+	}
+
+	@serial_prefix_lists = split(/,/, $$config_ref{serial_prefix});
 
     # Open connections to each autobench host
     foreach $client (keys %$clients_ref) {
-	$sock = open_socket($client, $$clients_ref{$client});
-	$client_socks{$sock} = $client;
-	print STDERR "Opened connection to $client:$$clients_ref{$client}\n"
-	    if $DEBUG;
-	# Make socket non-blocking
-	set_non_block($sock);
-	push(@socks, $sock);
+    $sock = open_socket($client, $$clients_ref{$client});
+    $client_socks{$sock} = $client;
+    print STDERR "Opened connection to $client:$$clients_ref{$client}\n"
+        if $DEBUG;
+    # Make socket non-blocking
+    set_non_block($sock);
+    push(@socks, $sock);
     }
     
     my $start_time = time() + 5;
     print STDERR "  Command: $httperf_args\n".
- 		 "  Time   : $start_time\n" if $DEBUG;    
+         "  Time   : $start_time\n" if $DEBUG;    
     # Send start commands to each client
     foreach $sock (@socks) {
-	syswrite($sock, "$httperf_args\n$start_time\nEND_AB\n");
-	print STDERR "Issued start command to: $client_socks{$sock}\n" if $DEBUG;
-	$response{$sock} = '';
+    # Update httperf args about session for each client
+    $httperf_args_full = $httperf_args." --cwmp=".$$config_ref{num_sess}.",0,".$$config_ref{sess_type}.",".$serial_prefix_lists[$i++];
+    syswrite($sock, "$httperf_args_full\n$start_time\nEND_AB\n");
+    print STDERR "Issued start command to: $client_socks{$sock}\n" if $DEBUG;
+    $response{$sock} = '';
     }
-
 
     # Check that clients have accepted command
     $accepted = 0;
     while (! $accepted) {
-	$rin = build_select_bits(@socks);
-	$nfound = select($rout = $rin, undef, undef, undef);
-	foreach $sock (@socks) {
-	    $buffer= '';
+    $rin = build_select_bits(@socks);
+    $nfound = select($rout = $rin, undef, undef, undef);
+    foreach $sock (@socks) {
+        $buffer= '';
 
-	    if(vec($rout, fileno($sock), 1) 
-	       && (! ($response{$sock} eq 'TRUE'))) {
-		$bytes = sysread($sock, $buffer, 2048);
-		if (! defined $bytes) {
-		    # Probably EAGAIN, don't do nowt
-		}
-		elsif ($bytes == 0) {
-		    die "FATAL: client $client_socks{$sock} closed connection";
-		}
-		else {
-		    $response{$sock} .= $buffer;
-		}
-	    }
-	}
-	foreach $sock (@socks) {
+        if(vec($rout, fileno($sock), 1) 
+           && (! ($response{$sock} eq 'TRUE'))) {
+        $bytes = sysread($sock, $buffer, 2048);
+        if (! defined $bytes) {
+            # Probably EAGAIN, don't do nowt
+        }
+        elsif ($bytes == 0) {
+            die "FATAL: client $client_socks{$sock} closed connection";
+        }
+        else {
+            $response{$sock} .= $buffer;
+        }
+        }
+    }
+    foreach $sock (@socks) {
 
-	    if ($response{$sock} =~ /ACCEPTED\n/) {
-		$response{$sock} = 'TRUE';
-		print STDERR "$client_socks{$sock} accepted command\n" if $DEBUG;
-	    }
-	    if ($response{$sock} eq 'TRUE') {
-		$accepted ++;
-	    }
-	}
-	$accepted = 0 if ($accepted < scalar(@socks));
+        if ($response{$sock} =~ /ACCEPTED\n/) {
+        $response{$sock} = 'TRUE';
+        print STDERR "$client_socks{$sock} accepted command\n" if $DEBUG;
+        }
+        if ($response{$sock} eq 'TRUE') {
+        $accepted ++;
+        }
+    }
+    $accepted = 0 if ($accepted < scalar(@socks));
     }
 
     $completed = 0;
     foreach $sock (@socks) {
-	$response{$sock} = '';
+    $response{$sock} = '';
     }
 
     while (! $completed) {
-	$rin = build_select_bits(@socks);
-	$nfound = select($rout = $rin, undef, undef, undef);
-	foreach $sock (@socks) {
-	    if (vec($rout, fileno($sock), 1)) {
-		$bytes = sysread($sock, $buffer, 2048);
-		if (! defined $bytes) {
-		    # Probably EAGAIN, don't do nowt
-		}
-		elsif ($bytes == 0) {
-		    die "FATAL: client $client_socks{$sock} closed connection";
-		}
-		else {
-		    $response{$sock} .= $buffer;
-		}
-	    }
-	}
-	foreach $sock (@socks) {
-	    if ($response{$sock} =~ /END_DATA\n/) {
-		$completed ++;
-	    }
-	    elsif ($response{$sock} =~ /BENCH_FAILED\n/) {
-		die "FATAL: client $client_socks{$sock} sent BENCH_FAILED";
-	    }
-	}
-	$completed = 0 if ($completed < scalar(@socks));
+    $rin = build_select_bits(@socks);
+    $nfound = select($rout = $rin, undef, undef, undef);
+    foreach $sock (@socks) {
+        if (vec($rout, fileno($sock), 1)) {
+        $bytes = sysread($sock, $buffer, 2048);
+        if (! defined $bytes) {
+            # Probably EAGAIN, don't do nowt
+        }
+        elsif ($bytes == 0) {
+            die "FATAL: client $client_socks{$sock} closed connection";
+        }
+        else {
+            $response{$sock} .= $buffer;
+        }
+        }
+    }
+    foreach $sock (@socks) {
+        if ($response{$sock} =~ /END_DATA\n/) {
+        $completed ++;
+        }
+        elsif ($response{$sock} =~ /BENCH_FAILED\n/) {
+        die "FATAL: client $client_socks{$sock} sent BENCH_FAILED";
+        }
+    }
+    $completed = 0 if ($completed < scalar(@socks));
     }
     
     foreach $sock (@socks) {
-	$results_sock{$sock} = parse_response($response{$sock});
+    $results_sock{$sock} = parse_response($response{$sock});
     }
     return collate_results(\%results_sock, @socks);
 
@@ -301,7 +336,7 @@ run_test
 }
 
 #---------------------------------------------------------------------------
-# test_host ($config_ref, $rate, $server, $uri, $port, $clients_ref)
+# test_host ($config_ref, $rate, $server, $uri, $port, $clients_ref
 sub
 test_host 
 {
@@ -311,19 +346,17 @@ test_host
 
     # Build list of extra httperf config options
     foreach (keys %$config_ref) {
-	if ( /^httperf_(.*)$/ ) {
+    if ( /^httperf_(.*)$/ ) {
             my $hf_val = $$config_ref{$_};
             $hf_val = ($hf_val eq 'NULL') ? '' : $hf_val; 
-	    $extra_httperf_opts .= " --".$1." ".$hf_val ;
-	}
+        $extra_httperf_opts .= " --".$1." ".$hf_val ;
     }
-    $httperf_args = "--server $server --uri \"$uri\" ".
-	"--num-conn ".$$config_ref{num_conn}.
-	" --num-call ".$$config_ref{num_call}.
-	" --timeout ".$$config_ref{timeout}.
-        " --rate $rate --port $port $extra_httperf_opts";
+    }
+    $httperf_args = "--server $server --uri \"$uri\"".
+    " --timeout ".$$config_ref{timeout}.
+    " --rate $rate --port $port $extra_httperf_opts";
 
-    %results = %{run_test($httperf_args, $clients_ref)};
+    %results = %{run_test($httperf_args, $clients_ref, $config_ref)};
 
     return \%results;
 }
@@ -340,9 +373,9 @@ my %config=get_config($CONFIG_FILE);
 # Override config file with options supplied on the command line.
 GetOptions( \%config, "host1:s","host2:s","uri1:s","uri2:s","port1:i",
             "port2:i","low_rate:i","high_rate:i","rate_step:i",
-            "num_conn:i","num_call:i","timeout:i","quiet","single_host",
-	    "output_fmt=s","file=s","clients=s","version","debug",
-            "const_test_time:i");
+            "num_sess:i","timeout:i","quiet","single_host",
+            "output_fmt=s","file=s","clients=s","version","debug",
+            "serial_prefix=s","sess_type=s","time_gap:i");
 $DEBUG = 1 if (defined $config{debug});
 
 if ($config{version}) {
@@ -350,13 +383,19 @@ if ($config{version}) {
     exit 0;
 }
 
-if ($config{const_test_time} && $config{const_test_time} < 10) {
-    die "--const_test_time must be >= 10. See autobench(1) for details\n";
-}
-
 %clients = %{get_clients($config{clients})};
 foreach $client (keys %clients) {
     $num_clients ++;
+}
+
+# Check number of serial prefix. If not defined, we will generate them randomly.
+if (defined($config{serial_prefix})) {
+	my @serial_prefix_lists = split(/,/, $config{serial_prefix});
+
+	if (($#serial_prefix_lists + 1) < $num_clients) {
+		print "not enough serial prefix for $num_clients clients\n";
+		exit 0;
+	}
 }
 
 if ( $config{output_fmt} eq 'csv' ) {
@@ -375,59 +414,57 @@ if (defined($config{file})){
     open(OUT, ">$config{file}") or die "Cannot open $config{file} for writing";
 }
 else {
-    # Connect OUT to STDOUT
-    open(OUT, ">&STDOUT") or die "Bizarre, cannot connect OUT to STDOUT!";
+	my $date = strftime "%Y%m%d-%H.%M.%S", localtime;
+	open(OUT, ">result.$config{num_sess}sess.$date") or open(OUT, ">&STDOUT") or die "Bizarre, cannot connect OUT to STDOUT!";
 }
 
 # Print first line of output
 # The following is really quite ugly...
-print OUT "dem_req_rate".$sep.
-       "req_rate_$config{host1}".$sep.
-       "con_rate_$config{host1}".$sep.
-       "min_rep_rate_$config{host1}".$sep.
-       "avg_rep_rate_$config{host1}".$sep.
-       "max_rep_rate_$config{host1}".$sep.
-       "stddev_rep_rate_$config{host1}".$sep.
-       "resp_time_$config{host1}".$sep.
-       "net_io_$config{host1}".$sep.
-       "errors_$config{host1}".$sep.
-       "status_100_$config{host1}".$sep.
-       "status_200_$config{host1}".$sep.
-       "status_300_$config{host1}".$sep.
-       "status_400_$config{host1}".$sep.
-       "status_500_$config{host1}";
+# The following is really quite ugly...
+    print OUT "dem_req_rate".$sep.
+        "time_begin".$sep.
+        "time_end".$sep.
+        "req_rate_$config{host1}".$sep.
+        "min_rep_rate_$config{host1}".$sep.
+        "avg_rep_rate_$config{host1}".$sep.
+        "max_rep_rate_$config{host1}".$sep.
+        "stddev_rep_rate_$config{host1}".$sep.
+        "duration_$config{host1}".$sep.
+        "sess_life_time_$config{host1}".$sep.
+        "net_io_$config{host1}".$sep.
+        "error_total_$config{host1}".$sep.
+        "error_work_flow_$config{host1}".$sep.
+        "error_bad_request_$config{host1}".$sep.
+        "error_no_response_$config{host1}".$sep.
+        "error_others_$config{host1}";
 
-if ($config{single_host}) {
-    print OUT "\n";
-}
-else {
-    print OUT $sep."req_rate_$config{host2}".$sep.
-       "con_rate_$config{host2}".$sep.
-       "min_rep_rate_$config{host2}".$sep.
-       "avg_rep_rate_$config{host2}".$sep.
-       "max_rep_rate_$config{host2}".$sep.
-       "stddev_rep_rate_$config{host2}".$sep.
-       "resp_time_$config{host2}".$sep.
-       "net_io_$config{host2}".$sep.
-       "errors_$config{host2}".$sep.
-       "status_100_$config{host2}".$sep.
-       "status_200_$config{host2}".$sep.
-       "status_300_$config{host2}".$sep.
-       "status_400_$config{host2}".$sep.
-       "status_500_$config{host2}\n";
-}
+    if ($config{single_host}) {
+        print OUT "\n";
+    }
+    else {
+        print OUT $sep."req_rate_$config{host2}".$sep.
+            "min_rep_rate_$config{host2}".$sep.
+            "avg_rep_rate_$config{host2}".$sep.
+            "max_rep_rate_$config{host2}".$sep.
+            "stddev_rep_rate_$config{host2}".$sep.
+            "duration_$config{host2}".$sep.
+            "sess_life_time_$config{host2}".$sep.
+            "net_io_$config{host2}".$sep.
+            "error_total_$config{host2}".$sep.
+            "error_work_flow_$config{host2}".$sep.
+            "error_bad_request_$config{host2}".$sep.
+            "error_no_response_$config{host2}".$sep.
+            "error_others_$config{host2}\n";
+    }
 
-my $conn_total = $config{num_conn};
+my $sess_total = $config{num_sess};
 
 for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate}; 
      $curr_rate += $config{rate_step}) {
 
     my $shared_rate = $curr_rate / $num_clients;
-    if ($config{const_test_time}) {
-        $config{num_conn} = $shared_rate * $config{const_test_time};
-    } else {
-        $config{num_conn} = $conn_total / $num_clients;
-    }
+    $config{num_sess} = $sess_total / $num_clients;
+
     print STDERR `date`;
     # Test Host 1
     print STDERR "Testing server $config{host1} at rate: $curr_rate\n";
@@ -435,47 +472,55 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
     
     # Test Host 2
     unless ( $config{single_host} ) {
-	print STDERR "About to test $config{host2} at rate: $curr_rate\n";
-	%res_host2 = %{test_host (\%config, $shared_rate, $config{host2}, $config{uri2}, $config{port2}, \%clients)};
+    print STDERR "About to test $config{host2} at rate: $curr_rate\n";
+    %res_host2 = %{test_host (\%config, $shared_rate, $config{host2}, $config{uri2}, $config{port2}, \%clients)};
     } 
 
     # Merge and Display Results
-    $dem_req = ($config{num_call} * $curr_rate);
+    $dem_req = $curr_rate;
     print OUT $dem_req.$sep.
-	  $res_host1{req_rate}.$sep.
-	  $res_host1{conn_rate}.$sep.
-	  $res_host1{rep_rate_min}.$sep.
-	  $res_host1{rep_rate_avg}.$sep.
-	  $res_host1{rep_rate_max}.$sep.
-	  $res_host1{rep_rate_stdv}.$sep.
-          $res_host1{rep_time}.$sep.
-	  $res_host1{net_io}.$sep.
-          $res_host1{percent_errors}.$sep.
-          $res_host1{status_100}.$sep.
-          $res_host1{status_200}.$sep.
-          $res_host1{status_300}.$sep.
-          $res_host1{status_400}.$sep.
-          $res_host1{status_500};
+      $res_host1{time_begin}.$sep.
+      $res_host1{time_end}.$sep.
+      $res_host1{conn_rate}.$sep.
+      $res_host1{rep_rate_min}.$sep.
+      $res_host1{rep_rate_avg}.$sep.
+      $res_host1{rep_rate_max}.$sep.
+      $res_host1{rep_rate_stdv}.$sep.
+      $res_host1{duration}.$sep.
+      $res_host1{sess_life_time}.$sep.
+      $res_host1{net_io}.$sep.
+      $res_host1{error_total}.$sep.
+      $res_host1{error_workflow}.$sep.
+      $res_host1{error_badreq}.$sep.
+      $res_host1{error_nores}.$sep.
+      $res_host1{error_other};
+
     if ($config{single_host}) {
-	print OUT "\n";
+    print OUT "\n";
     }
     else {
-	print OUT $sep.$res_host2{req_rate}.$sep.
-	  $res_host2{conn_rate}.$sep.
-	  $res_host2{rep_rate_min}.$sep.
-	  $res_host2{rep_rate_avg}.$sep.
-	  $res_host2{rep_rate_max}.$sep.
-	  $res_host2{rep_rate_stdv}.$sep.
-	  $res_host2{rep_time}.$sep.
-	  $res_host2{net_io}.$sep.
-	  $res_host2{percent_errors}.$sep.
-          $res_host2{status_100}.$sep.
-          $res_host2{status_200}.$sep.
-          $res_host2{status_300}.$sep.
-          $res_host2{status_400}.$sep.
-          $res_host2{status_500}."\n";
+    print OUT $res_host2{time_begin}.$sep.
+      $res_host2{time_end}.$sep.
+      $res_host2{conn_rate}.$sep.
+      $res_host2{rep_rate_min}.$sep.
+      $res_host2{rep_rate_avg}.$sep.
+      $res_host2{rep_rate_max}.$sep.
+      $res_host2{rep_rate_stdv}.$sep.
+      $res_host2{duration}.$sep.
+      $res_host2{sess_life_time}.$sep.
+      $res_host2{net_io}.$sep.
+      $res_host2{error_total}.$sep.
+      $res_host2{error_workflow}.$sep.
+      $res_host2{error_badreq}.$sep.
+      $res_host2{error_nores}.$sep.
+      $res_host2{error_other}."\n";
     }
 
+    # Delay time to make server stable before the next test
+    if ($config{time_gap} && $curr_rate < $config{high_rate}) {
+        print STDERR "Waiting $config{time_gap} seconds before the next test...\n";
+        sleep ($config{time_gap});
+    }
 }
 
 print STDERR "Benchmark complete\n";
