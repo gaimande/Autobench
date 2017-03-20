@@ -196,20 +196,25 @@ collate_results
     my ($results_sock_ref, @socks) = @_;
     my ($sock, $key, %results);
     my $num_clients = @socks;
-    
+
     foreach $sock (@socks) {
     foreach $key (keys %{$$results_sock_ref{$sock}}) {
-        if ($key cmp "time_begin" && $key cmp "time_end") {
-            $results{$key} += $ { $$results_sock_ref{$sock}}{$key};
-        }
+		if ($key eq "duration")
+		{
+			if (!defined($results{$key}) || $results{$key} < ${$$results_sock_ref{$sock}}{$key}) {
+				$results{$key} = ${$$results_sock_ref{$sock}}{$key};
+			}
+		}
+		elsif ($key cmp "time_begin" && $key cmp "time_end") {
+			$results{$key} += ${$$results_sock_ref{$sock}}{$key};
+		}
     }
     }
 
-    $results{time_begin} = $ { $$results_sock_ref{$socks[0]}}{time_begin};
-    $results{time_end} = $ { $$results_sock_ref{$socks[0]}}{time_end};
-    $results{duration} = $results{duration} / $num_clients;
+    $results{time_begin} = ${$$results_sock_ref{$socks[0]}}{time_begin};
+    $results{time_end} = ${$$results_sock_ref{$socks[0]}}{time_end};
     $results{sess_life_time} = $results{sess_life_time} / $num_clients;
-    $results{rep_rate_stdv} = $results{rep_rate_stdv} / $num_clients;
+	$results{net_io} = $results{net_io} / $num_clients;
     
     return \%results;
 }
@@ -228,12 +233,13 @@ run_test
 
 	if (!defined($$config_ref{serial_prefix})) {
     	foreach $client (keys %$clients_ref) {
-        	$$config_ref{serial_prefix} .= gen_rand_serial.",";
+			push (@serial_prefix_lists, gen_rand_serial);
     	}
-		print STDERR "Generate random serial prefix: $$config_ref{serial_prefix}\n";
+		print STDERR "Generate random serial prefix: @serial_prefix_lists\n";
 	}
-
-	@serial_prefix_lists = split(/,/, $$config_ref{serial_prefix});
+	else {
+		@serial_prefix_lists = split(/,/, $$config_ref{serial_prefix});
+	}
 
     # Open connections to each autobench host
     foreach $client (keys %$clients_ref) {
@@ -357,15 +363,14 @@ test_host
     " --rate $rate --port $port $extra_httperf_opts";
 
     %results = %{run_test($httperf_args, $clients_ref, $config_ref)};
-
-    return \%results;
+	return \%results;
 }
 
 #---------------------------------------------------------------------------
 # main
 
-my (%clients, $httperf_args, $curr_rate, %res_host1, %res_host2, $dem_req);
-my ($sep, $client, $num_clients);
+my (%clients, $httperf_args, $curr_rate, %res_host, %res_host1, %res_host2, $dem_req);
+my ($sep, $client, $num_clients, $key);
 
 # Read config
 my %config=get_config($CONFIG_FILE);
@@ -375,7 +380,7 @@ GetOptions( \%config, "host1:s","host2:s","uri1:s","uri2:s","port1:i",
             "port2:i","low_rate:i","high_rate:i","rate_step:i",
             "num_sess:i","timeout:i","quiet","single_host",
             "output_fmt=s","file=s","clients=s","version","debug",
-            "serial_prefix=s","sess_type=s","time_gap:i");
+            "serial_prefix=s","sess_type=s","time_gap:i","accurate:i");
 $DEBUG = 1 if (defined $config{debug});
 
 if ($config{version}) {
@@ -386,6 +391,10 @@ if ($config{version}) {
 %clients = %{get_clients($config{clients})};
 foreach $client (keys %clients) {
     $num_clients ++;
+}
+
+if (!defined($config{accurate})) {
+	$config{accurate} = 1;
 }
 
 # Check number of serial prefix. If not defined, we will generate them randomly.
@@ -415,7 +424,7 @@ if (defined($config{file})){
 }
 else {
 	my $date = strftime "%Y%m%d-%H.%M.%S", localtime;
-	open(OUT, ">result.$config{num_sess}sess.$date") or open(OUT, ">&STDOUT") or die "Bizarre, cannot connect OUT to STDOUT!";
+	open(OUT, ">result.$date.$config{num_sess}sess") or open(OUT, ">&STDOUT") or die "Bizarre, cannot connect OUT to STDOUT!";
 }
 
 # Print first line of output
@@ -424,24 +433,24 @@ else {
     print OUT "dem_req_rate".$sep.
         "time_begin".$sep.
         "time_end".$sep.
-        "req_rate_$config{host1}".$sep.
-        "min_rep_rate_$config{host1}".$sep.
-        "avg_rep_rate_$config{host1}".$sep.
-        "max_rep_rate_$config{host1}".$sep.
-        "stddev_rep_rate_$config{host1}".$sep.
-		"min_sess_rate_$config{host1}".$sep.
-		"avg_sess_rate_$config{host1}".$sep.
-		"max_sess_rate_$config{host1}".$sep.
-		"stddev_sess_rate_$config{host1}".$sep.
-		"concurrent_conn_$config{host1}".$sep.
-        "duration_$config{host1}".$sep.
-        "sess_life_time_$config{host1}".$sep.
-        "net_io_$config{host1}".$sep.
-        "error_total_$config{host1}".$sep.
-        "error_work_flow_$config{host1}".$sep.
-        "error_bad_request_$config{host1}".$sep.
-        "error_no_response_$config{host1}".$sep.
-        "error_others_$config{host1}";
+        "req_rate".$sep.
+        "min_rep_rate".$sep.
+        "avg_rep_rate".$sep.
+        "max_rep_rate".$sep.
+        "stddev_rep_rate".$sep.
+		"min_sess_rate".$sep.
+		"avg_sess_rate".$sep.
+		"max_sess_rate".$sep.
+		"stddev_sess_rate".$sep.
+		"concurrent_conn".$sep.
+        "duration".$sep.
+        "sess_life_time".$sep.
+        "net_io".$sep.
+        "error_total".$sep.
+        "error_work_flow".$sep.
+        "error_bad_request".$sep.
+        "error_no_response".$sep.
+        "error_others";
 
     if ($config{single_host}) {
         print OUT "\n";
@@ -474,16 +483,75 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
     my $shared_rate = $curr_rate / $num_clients;
     $config{num_sess} = $sess_total / $num_clients;
 
-    print STDERR `date`;
-    # Test Host 1
-    print STDERR "Testing server $config{host1} at rate: $curr_rate\n";
-    %res_host1 = %{test_host (\%config, $shared_rate, $config{host1}, $config{uri1}, $config{port1}, \%clients)};
+	undef %res_host1;
+	undef %res_host2;
+
+	for my $i (1..$config{accurate}) {
+		print STDERR `date`;
+		# Test Host 1
+		print STDERR "Testing server $config{host1} at rate: $curr_rate\n";
+
+		%res_host = %{test_host (\%config, $shared_rate, $config{host1}, $config{uri1}, $config{port1}, \%clients)};
+
+		foreach $key (keys %res_host) {
+			if ($key eq "duration")
+			{
+				print STDERR "Duration: $res_host{$key}\n";
+			}
+			if ($key cmp "time_begin" && $key cmp "time_end") {
+				$res_host1{$key} += $res_host{$key};
+			} else {
+				$res_host1{$key} .= $res_host{$key}.",";
+			}
+		}
+
+		# Calculate request rate
+		$res_host1{req_rate} += $res_host{req_num} / $res_host{duration};
     
-    # Test Host 2
-    unless ( $config{single_host} ) {
-    print STDERR "About to test $config{host2} at rate: $curr_rate\n";
-    %res_host2 = %{test_host (\%config, $shared_rate, $config{host2}, $config{uri2}, $config{port2}, \%clients)};
-    } 
+		# Test Host 2
+		unless ( $config{single_host} ) {
+			print STDERR "About to test $config{host2} at rate: $curr_rate\n";
+			%res_host = %{test_host (\%config, $shared_rate, $config{host2}, $config{uri2}, $config{port2}, \%clients)};
+
+			foreach $key (keys %res_host) {
+				if ($key cmp "time_begin" && $key cmp "time_end") {
+					$res_host2{$key} += $res_host{$key};
+				} else {
+					$res_host2{$key} .= $res_host{$key}.",";
+				}   
+
+			}
+
+			# Calculate request rate
+			$res_host2{req_rate} += $res_host{req_num} / $res_host{duration};
+		}
+
+		# Delay time to make server stable before the next test
+		if ($config{time_gap}) {
+			print STDERR "Waiting $config{time_gap} seconds before the next test...\n";
+			sleep ($config{time_gap});
+       }
+	}
+
+	# Calculate the average value of each test result
+	foreach $key (keys %res_host1) {
+		if (index ($key, "time_")) {
+			$res_host1{$key} = $res_host1{$key} / $config{accurate};
+		
+			# Set the floating precision
+			$res_host1{$key} = sprintf "%.3f", $res_host1{$key};
+		}
+	}
+
+	foreach $key (keys %res_host2) {
+		if (index ($key, "time_")) {
+		    $res_host2{$key} = $res_host2{$key} / $config{accurate};
+
+		    # Set the floating precision
+		     $res_host2{$key} = sprintf "%.3f", $res_host2{$key};
+		}
+	}       
+
 
     # Merge and Display Results
     $dem_req = $curr_rate;
@@ -533,12 +601,6 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
       $res_host2{error_badreq}.$sep.
       $res_host2{error_nores}.$sep.
       $res_host2{error_other}."\n";
-    }
-
-    # Delay time to make server stable before the next test
-    if ($config{time_gap} && $curr_rate < $config{high_rate}) {
-        print STDERR "Waiting $config{time_gap} seconds before the next test...\n";
-        sleep ($config{time_gap});
     }
 }
 

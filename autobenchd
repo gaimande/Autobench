@@ -126,14 +126,11 @@ parse_httperf_output
     my %results = %$results_ref;
     $_ = $output;
 
-	if (/^Total: .*replies (\d+) test-duration (\d+\.\d+)/) {
-        $results{replies}=$1;
-        $results{duration}=$2;
+	if (/^Total: .*requests (\d+) replies (\d+) test-duration (\d+\.\d+)/) {
+		$results{req_num}=$1;
+        $results{replies}=$2;
+        $results{duration}=$3;
     }   
-
-	if (/^Request rate: (\d+\.\d)/) {
-    	$results{req_rate}=$1;
-    }
 
 	if (/^Connection rate: .*<=(\d+)/) {
 		$results{concur_conn}=$1;
@@ -152,11 +149,11 @@ parse_httperf_output
         $results{sess_rate_max} = $3; 
         $results{sess_rate_stdv} = $4; 
     }   
-    
-    if (/^Net I\/O: (\d+\.\d)/) {
-        $results{net_io} = $1; 
-    }   
 
+	if (/^Net I\/O: (\d+\.\d)/) {
+		$results{net_io} = $1;
+	}
+    
     if (/^Cwmp session failed .*total (\d+) .*work-flow (\d+) bad-request (\d+) no-response (\d+) others (\d+)/) {
         $results{error_total} = $1; 
         $results{error_workflow} = $2; 
