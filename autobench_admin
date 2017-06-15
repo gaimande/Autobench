@@ -27,6 +27,7 @@ use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
 use Getopt::Long;
 use FileHandle;
 use POSIX qw(strftime);
+use LWP::Simple;
 
 # The location of the master config file
 my $MASTER_CONFIG = "/etc/autobench.conf";
@@ -37,6 +38,46 @@ my $CONFIG_FILE = $ENV{HOME}."/.autobench.conf";
 my $DEBUG = 0;
 
 my $VERSION = "2.1.1";
+
+my (%clients, $httperf_args, $curr_rate, %res_host, %res_host1, %res_host2, $dem_req);
+my ($sep, $client, $num_clients, $key);
+
+#--------------------------------------------------------------------------
+# wait_stable([$config_file])
+#
+# Delay time to make server stable before the next test.
+#
+
+sub
+wait_stable
+{
+	my ($server, $time_gap) = @_;
+	my $CPU_LOAD_SAFE = 2.0;
+	my $wait_check_time = 2;
+	my $url = "http://$server:19999".
+		      "/api/v1/data?chart=system.cpu".
+			  "&after=-$time_gap&before=0&group=average".
+			  "&options=absolute&points=1&format=ssv";
+	
+	if (!get $url) {
+		# If cannot get server cpu load information, just sleep
+		print STDERR "Waiting $time_gap seconds before the next test...\n";
+        sleep ($time_gap);
+    }
+	else
+	{
+		my $curr_cpu_load;
+
+		print STDERR "Waiting server $server stable before the next test...\n";
+		while (($curr_cpu_load = get $url) > $CPU_LOAD_SAFE)
+		{
+			print "System is not safe ($curr_cpu_load). Wait $wait_check_time seconds to check again.\n" if $DEBUG;
+			sleep $wait_check_time;
+		}
+
+		print "System is safe ($curr_cpu_load).\n" if $DEBUG;
+	}
+}
 
 #--------------------------------------------------------------------------
 # get_config([$config_file])
@@ -362,15 +403,21 @@ test_host
     " --timeout ".$$config_ref{timeout}.
     " --rate $rate --port $port $extra_httperf_opts";
 
+	if (defined($$config_ref{max_sess})) {
+		my $max_sess = int ($$config_ref{max_sess} / $num_clients);
+		$httperf_args = $httperf_args." --max-sessions $max_sess";
+	}
+
+	if (defined($$config_ref{forever})) {
+		$httperf_args = $httperf_args." --forever";
+	}
+
     %results = %{run_test($httperf_args, $clients_ref, $config_ref)};
 	return \%results;
 }
 
 #---------------------------------------------------------------------------
 # main
-
-my (%clients, $httperf_args, $curr_rate, %res_host, %res_host1, %res_host2, $dem_req);
-my ($sep, $client, $num_clients, $key);
 
 # Read config
 my %config=get_config($CONFIG_FILE);
@@ -380,7 +427,7 @@ GetOptions( \%config, "host1:s","host2:s","uri1:s","uri2:s","port1:i",
             "port2:i","low_rate:i","high_rate:i","rate_step:i",
             "num_sess:i","timeout:i","quiet","single_host",
             "output_fmt=s","file=s","clients=s","version","debug",
-            "serial_prefix=s","sess_type=s","time_gap:i","accurate:i");
+            "serial_prefix=s","sess_type=s","time_gap:i","accurate:i","forever","max_sess:i");
 $DEBUG = 1 if (defined $config{debug});
 
 if ($config{version}) {
@@ -481,7 +528,7 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
      $curr_rate += $config{rate_step}) {
 
     my $shared_rate = $curr_rate / $num_clients;
-    $config{num_sess} = $sess_total / $num_clients;
+    $config{num_sess} = int ($sess_total / $num_clients);
 
 	undef %res_host1;
 	undef %res_host2;
@@ -526,11 +573,7 @@ for ($curr_rate = $config{low_rate}; $curr_rate <= $config{high_rate};
 			$res_host2{req_rate} += $res_host{req_num} / $res_host{duration};
 		}
 
-		# Delay time to make server stable before the next test
-		if ($config{time_gap}) {
-			print STDERR "Waiting $config{time_gap} seconds before the next test...\n";
-			sleep ($config{time_gap});
-       }
+		wait_stable($config{host1}, $config{time_gap}) if $config{time_gap};
 	}
 
 	# Calculate the average value of each test result

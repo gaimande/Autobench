@@ -19,11 +19,6 @@ if [ ! -f $1 ] ; then
     exit 2
 fi
 
-if [ -f ${2} ] ; then
-    echo "File ${2} already exist"
-    exit 3
-fi
-
 input=$1
 shift
 
@@ -69,7 +64,12 @@ for col in $legend ; do
     i=`expr $i + 1`
 done
 
-echo set terminal postscript color > gnuplot.cmd
+if [ "${output##*.}" == "png" ]; then
+	echo set term png > gnuplot.cmd
+else
+	echo set terminal postscript color > gnuplot.cmd
+fi
+
 echo set key outside below >> gnuplot.cmd
 echo set key box >> gnuplot.cmd
 echo set grid >> gnuplot.cmd
