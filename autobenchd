@@ -28,6 +28,7 @@ use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
 use POSIX ":sys_wait_h";
 use vars qw (@dead_parrots);
 use Getopt::Long;
+use Date::Parse;
 
 my $LISTEN_PORT = 4600;
 my $LISTEN_ADDR = "0.0.0.0";
@@ -167,12 +168,8 @@ parse_httperf_output
     }   
 
     if (/^Cwmp testing time: begin (.*) end (.*)/) {
-        $results{time_begin} = $1; 
-        $results{time_end} = $2; 
-
-        # Replace space with '@' character
-        $results{time_begin} =~ s/\s/@/g;
-        $results{time_end} =~ s/\s/@/g;
+        $results{time_begin} = str2time($1); 
+        $results{time_end} = str2time($2); 
     } 
 
     return \%results;
