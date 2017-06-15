@@ -1,0 +1,58 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use LWP::Simple;
+
+my %server_list = ( 
+        "cwmp"		=> "10.72.0.39",
+        "mongod"	=> "10.72.0.158",
+		"acs"		=> "10.72.0.35",
+		"redis"		=> "10.72.0.163",
+		"nbi"		=> "10.72.0.40",
+	);  
+
+my @chart_list = (
+         "system.cpu",
+         "system.load",
+         "system.ram",
+         "system.swap",
+         "system.io",
+         "system.ipv4",
+         "ipv4.tcpsock",
+     );
+
+my %config;
+
+sub
+get_json_data
+{
+	my ($name, $ip, $chart) = @_;
+	my $filename = "$name.$ip.$chart";
+
+	$filename = "$config{base}/$filename" if $config{base};
+
+	my $url = "http://$ip:19999".
+		"/api/v1/data?chart=$chart".
+		"&after=$config{start}&before=$config{stop}".
+		"&group=average&format=json&options=seconds%2Cjsonwrap";
+
+	getstore ($url, $filename);
+}
+
+#--------------------------------
+# Main
+#
+
+GetOptions( \%config, "start:i", "stop:i", "base:s");
+
+foreach (sort keys %server_list) 
+{
+	my $srv_name = $_;
+	my $srv_ip = $server_list{$_};
+
+	foreach (@chart_list)
+	{
+		get_json_data ($srv_name, $srv_ip, $_);
+	}
+}

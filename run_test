@@ -1,0 +1,141 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+use POSIX qw(strftime);
+
+my $DEBUG = 1;
+
+my $acs_ip = "192.168.1.39";
+my $acs_port = 7547;
+
+my @testers = (
+		"192.168.1.78:4600",
+		"192.168.1.111:4600",
+		"192.168.1.151:4600",
+		"192.168.1.152:4600",
+		"192.168.1.46:4600",
+	);
+
+my @duts = ("DOG", "PIG", "CAT", "ROSE", "LOTUS");
+
+my %testcases = (
+		"0. testPeriodicInform"  => [20000, 100, 2000, 100,
+									 "/etc/httperf/tr069_periodically_inform",
+									 "--serial_prefix ".join(',', @duts)],
+		"1. testFirstInform"     => [3000, 100, 400, 10,
+                                     "/etc/httperf/tr069_first_inform_full"],
+        "2. testHighLoad"        => [300000, 3000, 3000, 0,
+                                     "/etc/httperf/tr069_periodically_inform",
+                                     "--serrial_prefix ".join(',', @duts).
+                                     " --forever --max-sessions 10000"],
+	);
+
+my $timeout = 60;
+my $timegap = 15;
+my $accurate = 1;
+
+my $AUTOBENCH_ADMIN = "/home/quyenlv/Autobench/autobench_admin";
+my $COLLECT_NETDATA = "/home/quyenlv/Autobench/collect_netdata";
+my $BENCH2GRAPH = "/home/quyenlv/Autobench/bench2graph";
+my $base_dir = "/tmp";
+
+#
+# Convert from seconds to readable time
+#
+
+sub
+convert_time
+{
+    my $time = shift;
+    my $days = int($time / 86400);
+    $time -= ($days * 86400);
+    my $hours = int($time / 3600);
+    $time -= ($hours * 3600);
+    my $minutes = int($time / 60);
+    my $seconds = $time % 60;
+
+    $days = $days < 1 ? '' : $days .' days ';
+    $hours = $hours < 1 ? '' : $hours .' hours ';
+    $minutes = $minutes < 1 ? '' : $minutes . ' minutes ';
+    $time = $days . $hours . $minutes . $seconds . ' seconds';
+    return $time;
+}
+
+#-----------------------------------
+# Main
+#
+
+foreach (sort keys %testcases)
+{
+    my ($cmd, $t_start, $t_stop);
+    my @params = @{$testcases{$_}};
+	my $testcase = (split ' ', $_)[-1];
+
+    # Prepare output direcotry structure
+    my $op_time = strftime "%Y%m%d_%H.%M.%S", localtime;
+	my $src_dir = "$base_dir/$op_time.$testcase";
+    system ("mkdir -p $src_dir/{result/raw,system_monitor}");
+
+	print "Creating output folder: $src_dir\n" if $DEBUG;
+
+    my $raw_data = "$src_dir/result/raw/data";
+	my $perf_data = "$src_dir/system_monitor";
+	my $desc_file = "$src_dir/TESTCASE";
+
+    $cmd = "$AUTOBENCH_ADMIN --file $raw_data".
+           " --single_host --host1 $acs_ip --port1 $acs_port".
+           " --clients ".join(',', @testers).
+           " --timeout $timeout --time_gap $timegap".
+           " --num_sess $params[0] --low_rate $params[1]".
+           " --high_rate $params[2] --rate_step $params[3]".
+           " --sess_type $params[4] --accurate $accurate";
+
+	$cmd .= " $params[5]" if $params[5];
+
+	$t_start = time;
+	system ($cmd);
+	$t_stop = time;
+
+	# Generate Report
+	system ("echo 'Session Rate' | $BENCH2GRAPH $raw_data ".
+			"$src_dir/result/sess_rate.png 1 9 10 11 12 > /dev/null 2>&1");
+
+	system ("echo 'Concurrent Rate' | $BENCH2GRAPH $raw_data ".
+			"$src_dir/result/concur_rate.png 1 13 > /dev/null 2>&1");
+
+	system ("echo 'Error Rate' | $BENCH2GRAPH $raw_data ".
+			"$src_dir/result/error_rate.png 1 17 18 19 20 21 > /dev/null 2>&1");
+
+	system ("echo 'Time Rate' | $BENCH2GRAPH $raw_data ".
+			"$src_dir/result/time_rate.png 1 14 15 > /dev/null 2>&1");
+
+	system ("$COLLECT_NETDATA --start $t_start --stop $t_stop --base $perf_data");
+
+	# Generate Description
+	open (my $fh, '>', $desc_file) or die "Could not open file '$desc_file' $!";
+
+	printf $fh "Testcase Name: $testcase\n";
+	printf $fh "-------------\n\n";
+	printf $fh "%-25s %s\n", "Date:",  strftime("%d-%b-%Y", localtime($t_start));
+	printf $fh "%-25s %d (%s)\n", "Time start:", $t_start, strftime("%H:%M:%S", localtime($t_start));
+	printf $fh "%-25s %d (%s)\n", "Time stop:", $t_stop, strftime("%H:%M:%S", localtime($t_stop));
+	printf $fh "%-25s %s\n", "Duration:", convert_time($t_stop - $t_start);
+	printf $fh "%-25s %d\n", "Tester number:", int scalar @testers;
+	printf $fh "Detail:\n";
+	printf $fh "%-25s %d sess\n", "    Sessions:", $params[0];
+	printf $fh "%-25s %d sess/s\n", "    Low rate:", $params[1];
+	printf $fh "%-25s %d sess/s\n", "    High rate:", $params[2];
+	printf $fh "%-25s %d sess/s\n", "    Rate step:", $params[3];
+	printf $fh "%-25s %d\n", "    Accurate:", $accurate;
+	printf $fh "%-25s %d seconds\n", "    Timeout:", $timeout;
+	printf $fh "%-25s %d seconds\n", "    Timegap:", $timegap;
+
+	close ($fh);
+
+	# Compress all testing result
+	system ("tar -C $base_dir -cjf $base_dir/$op_time.$testcase.tar.bz2 $op_time.$testcase");
+	system ("/home/quyenlv/copy_file_ftp.sh $base_dir/$op_time.$testcase.tar.bz2");
+
+	last;
+}
